@@ -53,35 +53,41 @@ def health_check():
 @app.route("/predict", methods=["POST"])
 def predict():
     global prediction_count, prediction_log
-    try:
-        data = request.get_json()
 
-        # Validate input
+    try:
+        data = request.get_json(force=True)
+
         if not data or "inputs" not in data:
             return jsonify({"error": "Missing 'inputs'"}), 400
 
         if not isinstance(data["inputs"], list) or len(data["inputs"]) == 0:
-            return jsonify({"error": "'inputs' must be non-empty list"}), 400
-
+            return jsonify({"error": "'inputs' must be a non-empty list"}), 400
         input_df = pd.DataFrame(data["inputs"])
 
-        # Feature engineering
+        # Convert numeric-like strings to numeric
+        for col in input_df.columns:
+            input_df[col] = pd.to_numeric(input_df[col], errors="ignore")
         input_df = build_features(input_df)
-        
-        # Preprocess data (mapping and log transform + select features)
+
         x_processed = preprocess_for_model(input_df, preprocess_config)
 
-        # Make predictions
+        # Safety check
+        if np.isnan(x_processed).any() or np.isinf(x_processed).any():
+            return jsonify({
+                "error": "Invalid input after preprocessing (NaN / Inf detected)"
+            }), 400
+        
         log_predictions = model.predict(x_processed)
 
-        # Validate predictions
-        if np.any(np.isnan(log_predictions)) or np.any(np.isinf(log_predictions)):
-            raise ValueError("Model produced invalid log predictions")
-        
-        log_predictions = np.clip(log_predictions, -20, 20)
+        if np.isnan(log_predictions).any() or np.isinf(log_predictions).any():
+            return jsonify({
+                "error": "Model produced NaN or Inf predictions"
+            }), 400
 
-        # Reverse log1p transformation
-        predictions = np.expm1(log_predictions)   
+        # Prevent exp overflow
+        # log_predictions = np.clip(log_predictions, -20, 20)
+
+        predictions = np.expm1(log_predictions)
 
         predictions = np.where(
             np.isfinite(predictions),
@@ -89,31 +95,36 @@ def predict():
             0.0
         )
 
-        # Monitoring
         prediction_count += len(predictions)
-        
-        # Log predictions with timestamp
-        for i, pred in enumerate(predictions):
 
+        for i, pred in enumerate(predictions):
             safe_input = {
-                k: float(v) if isinstance(v, (int, float, np.number)) and np.isfinite(v)
-                else str(v)
+                k: (
+                    float(v)
+                    if isinstance(v, (int, float, np.number)) and np.isfinite(v)
+                    else str(v)
+                )
                 for k, v in data["inputs"][i].items()
             }
 
             prediction_log.append({
-                "input": data["inputs"][i],
+                "input": safe_input,
                 "prediction": float(pred),
                 "timestamp": datetime.now().isoformat()
             })
-        
+
         return jsonify({
             "predictions": [float(p) for p in predictions],
             "predictions_served": prediction_count
         }), 200
-    
+
     except Exception as e:
-        return jsonify({"error": str(e)}), 400
+        return jsonify({
+            "error": "Prediction failed",
+            "detail": str(e)
+        }), 400
+
+
 
 @app.route("/metrics", methods=["GET"])
 def metrics():
