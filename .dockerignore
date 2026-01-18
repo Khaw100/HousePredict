@@ -1,0 +1,29 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Git
+.git/
+.gitignore
+
+# OS / Editor
+.DS_Store
+.vscode/
+
+# Large unused artifacts
+data/
+notebooks/
+general-ml/
+
+# Temporary files
+*.log
+*.tmp
+
+# Model artifacts (MLflow handled via volume)
+mlruns/
+
+# Do NOT ignore logs if used by backend
+logs/   ❌ JANGAN
