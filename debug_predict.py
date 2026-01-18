@@ -42,7 +42,7 @@ def preprocess_for_model(df, preprocess_config):
     for col, mapping in preprocess_config["ordinal_maps"].items():
         X[col] = X[col].astype(str).map(mapping)
     X = X[preprocess_config["selected_features"]]
-
+    print("FEATURES:", X.columns.tolist())
     for col in preprocess_config["log_transform_cols"]:
         X[col] = np.log1p(X[col])
 

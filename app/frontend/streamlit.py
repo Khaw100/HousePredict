@@ -83,7 +83,6 @@ with tab3:
     st.header("Housing Price Prediction Interface")
     st.subheader("Input Housing Features (Upload CSV File for Prediction)")
 
-    # Upload CSV file
     uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
 
     if uploaded_file is None:
@@ -94,34 +93,30 @@ with tab3:
     st.write("Input Data:")
     st.dataframe(input_data)
 
-    # Check if uploaded file is empty
     if input_data.empty:
         st.error("Uploaded CSV is empty.")
         st.stop()
 
     if st.button("Predict Housing Prices"):
-        with st.spinner("Sending data to backend for prediction..."):
-            response = pd.DataFrame()
+        with st.spinner("Sending CSV to backend..."):
             try:
-                response = pd.read_json(
-                    pd.io.json.dumps(
-                        requests.post(
-                            BAACKEND_URL,
-                            json={"inputs": input_data.to_dict(orient="records")},
-                            timeout=30
-                        )
-                    )
+
+                uploaded_file.seek(0)
+
+                response = requests.post(
+                    BAACKEND_URL,
+                    files={"file": uploaded_file},
+                    timeout=30
                 )
 
                 if response.status_code != 200:
-                    st.error(f"Backend error: {response.text}")
+                    st.error(response.text)
                     st.stop()
 
-                predictions = response.json().get("predictions", [])
+                predictions = response.json()["predictions"]
                 input_data["PredictedPrice"] = predictions
 
                 st.success("Prediction successful!")
-                st.subheader("Predicted Housing Prices:")
                 st.dataframe(input_data)
 
             except Exception as e:
@@ -173,12 +168,22 @@ with tab4:
     st.subheader("Prediction Monitoring")
 
     try:
-        if response.get("recent_predictions"):
-            st.dataframe(pd.DataFrame(response["recent_predictions"]))
+        metrics_resp = requests.get(METRICS_URL, timeout=10)
+
+        if metrics_resp.status_code == 200:
+            metrics = metrics_resp.json()
+            recent = metrics.get("recent_predictions", [])
+
+            if recent:
+                st.dataframe(pd.DataFrame(recent))
+            else:
+                st.info("No prediction logs available yet.")
         else:
-            st.info("No prediction logs available yet.")
-    except:
-        pass
+            st.warning("Failed to fetch prediction logs")
+
+    except Exception as e:
+        st.warning(f"Monitoring error: {e}")
+
 
 
 

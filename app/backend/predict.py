@@ -1,7 +1,7 @@
 import mlflow.sklearn
 import pandas as pd
 from utils.preprocessing import build_features, preprocess_for_model
-from utils.config import preprocess_config
+from utils.config import preprocess_config as PREPROCESS_CONFIG
 import json
 import numpy as np
 import joblib
@@ -24,9 +24,10 @@ METRICS_FILE = os.path.join(LOGS_DIR, "latest_metrics.json")
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
 MODEL_DIR = os.path.abspath(MODEL_DIR)
 
-
 print("===================================")
 print("Loading model from:", MODEL_DIR)
+print("PATH MODEL")
+print(MODEL_DIR)
 
 if not os.path.exists(MODEL_DIR):
     raise FileNotFoundError(f"Model not found at {MODEL_DIR}")
@@ -55,74 +56,73 @@ def predict():
     global prediction_count, prediction_log
 
     try:
-        data = request.get_json(force=True)
+        # === 1. LOAD CSV (SAMA SEPERTI DEBUG) ===
+        if "file" not in request.files:
+            return jsonify({"error": "CSV file is required"}), 400
 
-        if not data or "inputs" not in data:
-            return jsonify({"error": "Missing 'inputs'"}), 400
+        file = request.files["file"]
+        df = pd.read_csv(file)
 
-        if not isinstance(data["inputs"], list) or len(data["inputs"]) == 0:
-            return jsonify({"error": "'inputs' must be a non-empty list"}), 400
-        input_df = pd.DataFrame(data["inputs"])
+        if df.empty:
+            return jsonify({"error": "Uploaded CSV is empty"}), 400
 
-        # Convert numeric-like strings to numeric
-        for col in input_df.columns:
-            input_df[col] = pd.to_numeric(input_df[col], errors="ignore")
-        input_df = build_features(input_df)
+        print("=== RAW DATA ===")
+        print(df.head())
+        print(df.isna().sum())
 
-        x_processed = preprocess_for_model(input_df, preprocess_config)
+        # === 2. FEATURE ENGINEERING (SAMA) ===
+        df = build_features(df)
 
-        # Safety check
-        if np.isnan(x_processed).any() or np.isinf(x_processed).any():
-            return jsonify({
-                "error": "Invalid input after preprocessing (NaN / Inf detected)"
-            }), 400
+        print("\n=== AFTER FEATURE ENGINEERING ===")
+        print(df.head())
+        # === 3. PREPROCESS (SAMA PERSIS) ===
+        X = preprocess_for_model(df, PREPROCESS_CONFIG)
         
-        log_predictions = model.predict(x_processed)
 
-        if np.isnan(log_predictions).any() or np.isinf(log_predictions).any():
-            return jsonify({
-                "error": "Model produced NaN or Inf predictions"
-            }), 400
+        print("\n=== AFTER PREPROCESS ===")
+        print("Shape:", X.shape)
+        print("dtype:", X.dtype)
+        print("min:", np.min(X))
+        print("max:", np.max(X))
+        print("NaN:", np.isnan(X).any())
+        print("Inf:", np.isinf(X).any())
 
-        # Prevent exp overflow
-        # log_predictions = np.clip(log_predictions, -20, 20)
+        if np.isnan(X).any() or np.isinf(X).any():
+            return jsonify({"error": "Invalid values after preprocessing"}), 400
 
-        predictions = np.expm1(log_predictions)
+        # === 4. MODEL PREDICT (SAMA) ===
+        log_pred = model.predict(X)
 
-        predictions = np.where(
-            np.isfinite(predictions),
-            predictions,
-            0.0
-        )
+        print("\n=== MODEL OUTPUT ===")
+        print("Log prediction:", log_pred[:5])
+        print("NaN:", np.isnan(log_pred).any())
+        print("Inf:", np.isinf(log_pred).any())
 
-        prediction_count += len(predictions)
+        if np.isnan(log_pred).any() or np.isinf(log_pred).any():
+            return jsonify({"error": "Model produced invalid predictions"}), 400
 
-        for i, pred in enumerate(predictions):
-            safe_input = {
-                k: (
-                    float(v)
-                    if isinstance(v, (int, float, np.number)) and np.isfinite(v)
-                    else str(v)
-                )
-                for k, v in data["inputs"][i].items()
-            }
+        # === 5. REVERSE LOG (SAMA) ===
+        price = np.expm1(log_pred)
 
+        print("\n=== FINAL PRICE ===")
+        print(price[:5])
+
+        prediction_count += len(price)
+
+        for lp, p in zip(log_pred, price):
             prediction_log.append({
-                "input": safe_input,
-                "prediction": float(pred),
+                "log_prediction": float(lp),
+                "prediction": float(p),
                 "timestamp": datetime.now().isoformat()
             })
 
         return jsonify({
-            "predictions": [float(p) for p in predictions],
+            "predictions": price.tolist(),
             "predictions_served": prediction_count
         }), 200
 
     except Exception as e:
-        return jsonify({
-            "error": "Prediction failed",
-            "detail": str(e)
-        }), 400
+        return jsonify({"error": str(e)}), 500
 
 
 

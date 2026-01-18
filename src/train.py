@@ -5,6 +5,7 @@ import numpy as np
 import json 
 import joblib
 import sys
+import os
 from datetime import datetime
 from sklearn.preprocessing import RobustScaler
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
@@ -157,6 +158,10 @@ def train_model(data_path,
         
         # Log metrics
         mlflow.log_metrics(metrics)
+
+        # 🔥 SAVE NATIVE XGBOOST MODEL
+        os.makedirs("models", exist_ok=True)
+        model.get_booster().save_model("models/tuned_xgb_model_v1.json")
 
         # Log model
         mlflow.sklearn.log_model(model, "model", registered_model_name="housing-price-model")
