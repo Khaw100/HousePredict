@@ -3,6 +3,10 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
 import requests
+import os
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 
 st.set_page_config(page_title="Housing Price Prediction", layout="wide")
 
@@ -42,7 +46,10 @@ with tab2:
 
     with col1:
         st.subheader("Project 1: Housing Price Prediction")
-        st.image("https://miro.medium.com/v2/resize:fit:1400/1*Yk2bY9p3v6j4f8X1b0nR5A.png", use_column_width=True)
+        st.image(
+            os.path.join(ASSETS_DIR, "houses.png"),
+            width=200
+        )
         st.markdown("""
         - Developed a machine learning model to predict housing prices using XGBoost.
         - Implemented feature engineering, data preprocessing, and model evaluation.
@@ -51,7 +58,10 @@ with tab2:
 
     with col2:
         st.subheader("Project 2: Fashion Recommendation System")
-        st.image("https://miro.medium.com/v2/resize:fit:1400/1*eX5nYeZ2bX5Fz4G3j3k7RQ.png", use_column_width=True)
+        st.image(
+            os.path.join(ASSETS_DIR, "fashion.png"),
+            width=200
+        )
         st.markdown("""
         - Built a recommendation system for fashion products using collaborative filtering and content-based filtering.
         - Utilized user behavior data and product attributes to enhance recommendation accuracy.
@@ -59,7 +69,10 @@ with tab2:
     
     with col3:
         st.subheader("Project 3: Finetuning GPT-2 for Psychological Counseling")
-        st.image("https://miro.medium.com/v2/resize:fit:1400/1*3bXKXJH1j5jF5Z8vQ9Y7Ww.png", use_column_width=True)
+        st.image(
+            os.path.join(ASSETS_DIR, "gpt2.png"),
+            width=200
+        )
         st.markdown("""
         - Fine-tuned GPT-2 model to provide psychological counseling responses.
         - Leveraged transfer learning techniques to adapt the model for empathetic and context-aware interactions.
@@ -125,11 +138,10 @@ with tab4:
             feature = st.selectbox("Select Feature for Visualization", numeric_cols)
 
             # Display distribution plot
-            fig, ax = st.pyplot.subplots()
+            fig, ax = plt.subplots()
             ax.hist(input_data[feature], bins=30)
             ax.set_title(f"Distribution of {feature}")
             st.pyplot(fig)
-
 
             # Displat Correlation Heatmap
             st.markdown("### Correlation Heatmap")
@@ -148,9 +160,10 @@ with tab4:
         response = requests.get(METRICS_URL, timeout=10)
         if response.status_code == 200:
             metrics = response.json()
-            st.markdown(f"**Mean Squared Error (MSE):** {round(metrics.get('mse', 0),2)}")
-            st.markdown(f"**Root Mean Squared Error (RMSE):** {round(metrics.get('rmse', 0),2)}")
-            st.markdown(f"**Mean Absolute Error (MAE):** {round(metrics.get('mae', 0),2)}")
+            training = metrics.get("training_metrics", {})
+            st.markdown(f"**Mean Squared Error (MSE):** {round(training.get('mse', 0), 2)}")
+            st.markdown(f"**Root Mean Squared Error (RMSE):** {round(training.get('rmse', 0), 2)}")
+            st.markdown(f"**Mean Absolute Error (MAE):** {round(training.get('mae', 0), 2)}")
         else:
             st.error(f"Failed to fetch metrics: {response.text}")
     except Exception as e:

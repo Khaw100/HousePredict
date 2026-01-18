@@ -26,4 +26,8 @@ def preprocess_for_model(df, preprocess_config):
     for col in preprocess_config["log_transform_cols"]:
         if col in X.columns:
             X[col] = np.log1p(X[col].clip(lower=0))
+    
+    for col in X.select_dtypes(include=[np.number]).columns:
+        X[col] = X[col].clip(lower=0, upper=1e6)
+
     return X

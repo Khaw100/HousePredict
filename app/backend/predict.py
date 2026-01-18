@@ -13,7 +13,7 @@ from datetime import datetime
 app = Flask(__name__)
 
 # Environment & Paths
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+BASE_DIR = os.path.dirname(__file__)
 MODEL_NAME = "housing-price-model"
 MODEL_VERSION = os.getenv("MODEL_VERSION", "latest")
 
@@ -25,9 +25,6 @@ MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
 MODEL_DIR = os.path.abspath(MODEL_DIR)
 
 
-# =============================
-# Load Model
-# =============================
 print("===================================")
 print("Loading model from:", MODEL_DIR)
 
@@ -77,14 +74,33 @@ def predict():
         # Make predictions
         log_predictions = model.predict(x_processed)
 
+        # Validate predictions
+        if np.any(np.isnan(log_predictions)) or np.any(np.isinf(log_predictions)):
+            raise ValueError("Model produced invalid log predictions")
+        
+        log_predictions = np.clip(log_predictions, -20, 20)
+
         # Reverse log1p transformation
-        predictions = np.expm1(log_predictions)          
+        predictions = np.expm1(log_predictions)   
+
+        predictions = np.where(
+            np.isfinite(predictions),
+            predictions,
+            0.0
+        )
 
         # Monitoring
         prediction_count += len(predictions)
         
         # Log predictions with timestamp
         for i, pred in enumerate(predictions):
+
+            safe_input = {
+                k: float(v) if isinstance(v, (int, float, np.number)) and np.isfinite(v)
+                else str(v)
+                for k, v in data["inputs"][i].items()
+            }
+
             prediction_log.append({
                 "input": data["inputs"][i],
                 "prediction": float(pred),
@@ -92,7 +108,7 @@ def predict():
             })
         
         return jsonify({
-            "predictions": predictions.tolist(),
+            "predictions": [float(p) for p in predictions],
             "predictions_served": prediction_count
         }), 200
     

@@ -9,7 +9,7 @@ services:
     ports:
       - "5000:5000"
     volumes:
-      - ./logs:/app/logs
+      - ./app/backend/logs:/app/logs
     environment:
       - MODEL_NAME=housing-price-model
       - MODEL_VERSION=latest
