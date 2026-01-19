@@ -161,7 +161,8 @@ def train_model(data_path,
 
         # 🔥 SAVE NATIVE XGBOOST MODEL
         os.makedirs("models", exist_ok=True)
-        model.get_booster().save_model("models/tuned_xgb_model_v1.json")
+        joblib.dump(model, "models/tuned_xgb_model_v1.pkl")
+        # model.get_booster().save_model("models/tuned_xgb_model_v1.json")
 
         # Log model
         mlflow.sklearn.log_model(model, "model", registered_model_name="housing-price-model")

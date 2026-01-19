@@ -27,7 +27,7 @@ mlflow.db
 data/
 *.csv
 *.parquet
-*.pkl
+# *.pkl
 
 *.joblib
 *.h5
@@ -35,7 +35,7 @@ data/
 
 monitoring/
 general-ml/
-notebooks/
+# notebooks/
 
 *.tar
 *.pid

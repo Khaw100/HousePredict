@@ -7,6 +7,7 @@ import numpy as np
 import joblib
 import os
 
+from xgboost import XGBRegressor
 from flask import Flask, request, jsonify
 from datetime import datetime
 
@@ -31,9 +32,11 @@ print(MODEL_DIR)
 
 if not os.path.exists(MODEL_DIR):
     raise FileNotFoundError(f"Model not found at {MODEL_DIR}")
+
 # load model
 model = joblib.load(os.path.join(MODEL_DIR, "tuned_xgb_model_v1.pkl"))
-
+# model = XGBRegressor
+# model.load_model(os.path.join(MODEL_DIR, "tuned_xgb_model_v1.pkl"))
 print("Model loaded successfully.")
 print("===================================")
 
