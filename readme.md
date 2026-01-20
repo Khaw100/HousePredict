@@ -97,15 +97,3 @@ To understand how the model was developed, including exploratory data analysis, 
 ## 📦 Provided Zip File
 
 A zip file containing the complete project codebase, models, and data is provided for easy download and setup. Extract the zip file and follow the installation instructions above.
-
-## ⚠️ Known Issues
-
-- Prediction works correctly in local Python execution but may fail when called from the Streamlit UI due to potential serialization issues. Use the debug script (`debug_predict.py`) for local testing.
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Commit changes
-4. Push to the branch
-5. Open a Pull Request
