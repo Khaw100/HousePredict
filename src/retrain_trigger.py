@@ -3,15 +3,18 @@ import json
 from datetime import datetime
 import sys
 
-def trigger_retraining(data_path="data/train_data.csv"):
+def trigger_retraining(data_path="/app/data/train_cleaned.csv"):
     print("\n" + "=" * 60)
-    print("�� RETRAINING PIPELINE TRIGGERED")
+    print("🔄 RETRAINING PIPELINE TRIGGERED")
     print("=" * 60)
 
     try:
-        print("\n📚 Step 1: Training new model...")
+        print(f"\n📚 Step 1: Training new model with {data_path}...")
+        
         result = subprocess.run(
-            ["python", "src/train.py", data_path], capture_output=True, text=True
+            ["python", "/src/train.py", data_path], 
+            capture_output=True, 
+            text=True
         )
 
         if result.returncode != 0:
@@ -29,23 +32,24 @@ def trigger_retraining(data_path="data/train_data.csv"):
             "status": "success",
         }
 
-        with open("logs/retraining.jsonl", "a") as f:
+        with open("/app/logs/retraining.jsonl", "a") as f:
             f.write(json.dumps(retrain_log) + "\n")
 
         print("\n🎉 Retraining completed successfully!")
         print("\n💡 Next steps:")
-        print("   1. Review new model in MLflow UI")
+        print("   1. Review new model in MLflow UI (http://localhost:5000)")
         print("   2. Test with validation data")
         print("   3. Deploy new version to production")
-        print("   4. Or rollback if performance degrades")
 
         return True
 
     except Exception as e:
         print(f"❌ Retraining failed: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
 if __name__ == "__main__":
-    data_path = sys.argv[1] if len(sys.argv) > 1 else "/app/data/train_data.csv"
+    data_path = sys.argv[1] if len(sys.argv) > 1 else "/app/data/train_cleaned.csv"
     trigger_retraining(data_path)

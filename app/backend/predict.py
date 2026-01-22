@@ -6,7 +6,6 @@ import numpy as np
 import joblib
 import os
 from mlflow.tracking import MlflowClient
-# from xgboost import XGBRegressor
 from flask import Flask, request, jsonify
 from datetime import datetime
 
@@ -14,18 +13,13 @@ app = Flask(__name__)
 
 # Environment & Paths
 LOGS_DIR = "/app/logs"
-
 MODEL_NAME = "housing-price-model"
 MODEL_VERSION = os.getenv("MODEL_VERSION", "latest")
-
-# CONFIG_PATH = "/app/config/preprocess_config.pkl"
-# PREPROCESS_CONFIG = joblib.load(CONFIG_PATH)
 
 PREDICTION_LOG_FILE = os.path.join(LOGS_DIR, "predictions.jsonl")
 METRICS_FILE = os.path.join(LOGS_DIR, "latest_metrics.json")
 
 os.makedirs(LOGS_DIR, exist_ok=True)
-
 
 print("===================================")
 print(f"   Loading model from MLflow Registry")
@@ -34,10 +28,6 @@ print(f"   Version: {MODEL_VERSION}")
 print("===================================")
 
 # MLFLOW model Registry URI
-model_uri = f"models:/{MODEL_NAME}/{MODEL_VERSION}"
-
-from mlflow.tracking import MlflowClient
-
 mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000"))
 client = MlflowClient()
 
@@ -74,28 +64,66 @@ config_path = mlflow.artifacts.download_artifacts(
 )
 PREPROCESS_CONFIG = joblib.load(config_path)
 
-print("Model & preprocessing config loaded successfully.")
+print("✅ Model & preprocessing config loaded successfully.")
 print("===================================")
 
-# Prediction counter fo monitoring
+# Prediction counter for monitoring
 prediction_count = 0
 prediction_log = []
 
+
+def log_prediction_to_file(engineered_data, prediction_value, model_version):
+    try:
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "prediction": float(prediction_value),
+            "model_version": str(model_version),
+            "features": {
+                "OverallQual": int(engineered_data.get("OverallQual", 0)),
+                "TotalSF": int(engineered_data.get("TotalSF", 0)),
+                "GrLivArea": int(engineered_data.get("GrLivArea", 0)),
+                "HouseAge": int(engineered_data.get("HouseAge", 0)),
+                "GarageArea": int(engineered_data.get("GarageArea", 0)),
+                "GarageCars": int(engineered_data.get("GarageCars", 0)),
+                "KitchenQual": int(engineered_data.get("KitchenQual", 0)),
+                "BsmtQual": int(engineered_data.get("BsmtQual", 0)),
+                "YearRemodAdd": int(engineered_data.get("YearRemodAdd", 0)),
+                "LotArea": int(engineered_data.get("LotArea", 0)),
+                "TotalBsmtFinSF": int(engineered_data.get("TotalBsmtFinSF", 0)),
+                "LotFrontage": int(engineered_data.get("LotFrontage", 0)),
+                "MasVnrArea": int(engineered_data.get("MasVnrArea", 0)),
+                "TotalPorchSF": int(engineered_data.get("TotalPorchSF", 0)),
+            }
+        }
+        
+        # Append to JSONL file
+        with open(PREDICTION_LOG_FILE, "a") as f:
+            f.write(json.dumps(log_entry) + "\n")
+        
+        return True
+    except Exception as e:
+        print(f"Warning: Failed to log prediction: {e}")
+        return False
+
+
 @app.route("/health", methods=["GET"])
 def health_check():
+    """Health check endpoint"""
     return jsonify({
-                        "status": "healthy",
-                        "model_name": MODEL_NAME,
-                        "model_version": MODEL_VERSION,
-                        "predictions_served": prediction_count,
-                        "timestamp": datetime.now().isoformat()
-                    }), 200
+        "status": "healthy",
+        "model_name": MODEL_NAME,
+        "model_version": MODEL_VERSION,
+        "predictions_served": prediction_count,
+        "timestamp": datetime.now().isoformat()
+    }), 200
+
 
 @app.route("/predict", methods=["POST"])
 def predict():
     global prediction_count, prediction_log
 
     try:
+        # Check if file is provided
         if "file" not in request.files:
             return jsonify({"error": "CSV file is required"}), 400
 
@@ -106,48 +134,58 @@ def predict():
             return jsonify({"error": "Uploaded CSV is empty"}), 400
 
         # Feature Engineering
-        df = build_features(df)
-        X = preprocess_for_model(df, PREPROCESS_CONFIG)
+        df_engineered = build_features(df)
+        X = preprocess_for_model(df_engineered, PREPROCESS_CONFIG)
 
+        # Validate preprocessed data
         if np.isnan(X).any() or np.isinf(X).any():
             return jsonify({"error": "Invalid values after preprocessing"}), 400
 
-        # Predict
+        # Predict (log scale)
         log_pred = model.predict(X)
 
+        # Validate predictions
         if np.isnan(log_pred).any() or np.isinf(log_pred).any():
             return jsonify({"error": "Model produced invalid predictions"}), 400
         
+        # Convert back to original scale
         price = np.expm1(log_pred)
         prediction_count += len(price)
 
-        # Logging
+        # Log each prediction individually
+        logged_count = 0
         for i, (lp, p) in enumerate(zip(log_pred, price)):
+
             log_entry = {
                 "timestamp": datetime.now().isoformat(),
-                "input": df.iloc[i].to_dict(),   # input data
                 "prediction": float(p),
                 "model_version": MODEL_VERSION
             }
-            # /metrics
             prediction_log.append(log_entry)
 
-            # Log for mmonitoring
-            with open(PREDICTION_LOG_FILE, "a") as f:
-                f.write(json.dumps(log_entry) + "\n")
+            engineered_row = df_engineered.iloc[i].to_dict()
+            if log_prediction_to_file(engineered_row, p, MODEL_VERSION):
+                logged_count += 1
+
+        print(f"📝 Logged {logged_count}/{len(price)} predictions to {PREDICTION_LOG_FILE}")
 
         return jsonify({
             "predictions": price.tolist(),
-            "predictions_served": prediction_count
+            "count": len(price),
+            "predictions_served": prediction_count,
+            "logged_for_monitoring": logged_count,
+            "timestamp": datetime.now().isoformat()
         }), 200
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
-
 
 
 @app.route("/metrics", methods=["GET"])
 def metrics():
+    """Get model metrics and prediction statistics"""
     training_metrics = {}
 
     if os.path.exists(METRICS_FILE):
@@ -162,7 +200,48 @@ def metrics():
         "recent_predictions": prediction_log[-10:],
         "timestamp": datetime.now().isoformat()
     })
+
+
+@app.route("/monitoring/stats", methods=["GET"])
+def monitoring_stats():
+    try:
+        predictions = []
+        
+        if not os.path.exists(PREDICTION_LOG_FILE):
+            return jsonify({
+                "total_predictions": 0,
+                "message": "No predictions logged yet"
+            })
+        
+        with open(PREDICTION_LOG_FILE, "r") as f:
+            for line in f:
+                predictions.append(json.loads(line))
+        
+        if not predictions:
+            return jsonify({
+                "total_predictions": 0,
+                "message": "No predictions in file"
+            })
+        
+        pred_values = [p["prediction"] for p in predictions]
+        
+        return jsonify({
+            "total_predictions": len(predictions),
+            "recent_predictions": predictions[-10:],  # Last 10
+            "statistics": {
+                "mean": float(np.mean(pred_values)),
+                "std": float(np.std(pred_values)),
+                "min": float(min(pred_values)),
+                "max": float(max(pred_values)),
+                "range": float(max(pred_values) - min(pred_values))
+            },
+            "timestamp": datetime.now().isoformat()
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001, debug=False)
-
-

@@ -43,8 +43,11 @@ def train_model(
     preprocess_config_path="/app/config/preprocess_config.pkl",
     experiment_name="HousePricePrediction",
 ):
-    mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000"))
+    mlflow_uri = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
+    mlflow.set_tracking_uri(mlflow_uri)
     mlflow.set_experiment(experiment_name)
+
+    print(f"MLflow Tracking URI: {mlflow_uri}")
 
     data = pd.read_csv(data_path)
     preprocess_config = joblib.load(preprocess_config_path)
@@ -62,7 +65,7 @@ def train_model(
     X_train_p = preprocess_for_model(X_train, preprocess_config)
     X_val_p = preprocess_for_model(X_val, preprocess_config)
 
-    with mlflow.start_run(run_name=f"xgb_{datetime.now():%Y%m%d_%H%M%S}"):
+    with mlflow.start_run(run_name=f"xgb_{datetime.now():%Y%m%d_%H%M%S}") as run:
 
         model = XGBRegressor(
             objective="reg:squarederror",
@@ -79,31 +82,63 @@ def train_model(
         }
 
         mlflow.log_metrics(metrics)
-        mlflow.log_params(preprocess_config.get("model_params", {}))
+        mlflow.log_params(model_params)
+        mlflow.log_param("training_samples", len(X_train))
+        mlflow.log_param("validation_samples", len(X_val))
 
-        # ✅ 1. LOG MODEL
-        mlflow.sklearn.log_model(
+        print("📦 Logging model artifacts...")
+        model_info = mlflow.sklearn.log_model(
             model,
-            artifact_path="model"
+            artifact_path="model",
+            registered_model_name="housing-price-model"  # Langsung register di sini
         )
 
-        # ✅ 2. LOG PREPROCESS CONFIG (TEMP SAFE)
         with TemporaryDirectory() as tmp:
             cfg_path = os.path.join(tmp, "preprocess_config.pkl")
             joblib.dump(preprocess_config, cfg_path)
             mlflow.log_artifact(cfg_path, artifact_path="config")
 
-        # ✅ 3. REGISTER MODEL
-        run_id = mlflow.active_run().info.run_id
-        mlflow.register_model(
-            model_uri=f"runs:/{run_id}/model",
-            name="housing-price-model",
-        )
+        
 
-        print("✅ Training & registration completed")
-        print(metrics)
+        os.makedirs("/app/logs", exist_ok=True)
+        with open("/app/logs/latest_metrics.json", "w") as f:
+            json.dump(
+                {
+                    **metrics,
+                    "timestamp": datetime.now().isoformat(),
+                    "run_id": run.info.run_id,
+                    "model_version": "latest",
+                },
+                f,
+                indent=2,
+            )
 
-        return run_id
+
+        # # ✅ 1. LOG MODEL
+        # mlflow.sklearn.log_model(
+        #     model,
+        #     artifact_path="model"
+        # )
+
+
+        # # ✅ 2. LOG PREPROCESS CONFIG (TEMP SAFE)
+        # with TemporaryDirectory() as tmp:
+        #     cfg_path = os.path.join(tmp, "preprocess_config.pkl")
+        #     joblib.dump(preprocess_config, cfg_path)
+        #     mlflow.log_artifact(cfg_path, artifact_path="config")
+
+        # # ✅ 3. REGISTER MODEL
+        # run_id = mlflow.active_run().info.run_id
+        # mlflow.register_model(
+        #     model_uri=f"runs:/{run_id}/model",
+        #     name="housing-price-model",
+        # )
+
+        print(f"✅ Training completed - Run ID: {run.info.run_id}")
+        print(f"📍 Model URI: {model_info.model_uri}")
+        print("📊 Metrics:", metrics)
+
+        return run.info.run_id
 
 
 if __name__ == "__main__":
