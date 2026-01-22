@@ -1,43 +1,80 @@
 import mlflow.sklearn
 import pandas as pd
 from utils.preprocessing import build_features, preprocess_for_model
-from utils.config import preprocess_config as PREPROCESS_CONFIG
 import json
 import numpy as np
 import joblib
 import os
-
-from xgboost import XGBRegressor
+from mlflow.tracking import MlflowClient
+# from xgboost import XGBRegressor
 from flask import Flask, request, jsonify
 from datetime import datetime
 
 app = Flask(__name__)
 
 # Environment & Paths
-BASE_DIR = os.path.dirname(__file__)
+LOGS_DIR = "/app/logs"
+
 MODEL_NAME = "housing-price-model"
 MODEL_VERSION = os.getenv("MODEL_VERSION", "latest")
 
-LOGS_DIR = os.path.join(BASE_DIR, "logs")
+# CONFIG_PATH = "/app/config/preprocess_config.pkl"
+# PREPROCESS_CONFIG = joblib.load(CONFIG_PATH)
 
+PREDICTION_LOG_FILE = os.path.join(LOGS_DIR, "predictions.jsonl")
 METRICS_FILE = os.path.join(LOGS_DIR, "latest_metrics.json")
-# Path absolut model
-MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
-MODEL_DIR = os.path.abspath(MODEL_DIR)
+
+os.makedirs(LOGS_DIR, exist_ok=True)
+
 
 print("===================================")
-print("Loading model from:", MODEL_DIR)
-print("PATH MODEL")
-print(MODEL_DIR)
+print(f"   Loading model from MLflow Registry")
+print(f"   Model: {MODEL_NAME}")
+print(f"   Version: {MODEL_VERSION}")
+print("===================================")
 
-if not os.path.exists(MODEL_DIR):
-    raise FileNotFoundError(f"Model not found at {MODEL_DIR}")
+# MLFLOW model Registry URI
+model_uri = f"models:/{MODEL_NAME}/{MODEL_VERSION}"
 
-# load model
-model = joblib.load(os.path.join(MODEL_DIR, "tuned_xgb_model_v1.pkl"))
-# model = XGBRegressor
-# model.load_model(os.path.join(MODEL_DIR, "tuned_xgb_model_v1.pkl"))
-print("Model loaded successfully.")
+from mlflow.tracking import MlflowClient
+
+mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000"))
+client = MlflowClient()
+
+# Resolve model version (alias -> fallback latest)
+try:
+    print("Trying to load model using alias: champion")
+    model_version = client.get_model_version_by_alias(
+        name=MODEL_NAME,
+        alias="champion"
+    )
+except Exception:
+    print("Alias 'champion' not found, fallback to latest version")
+    latest = client.get_latest_versions(MODEL_NAME)
+    model_version = latest[0]
+
+RUN_ID = model_version.run_id
+MODEL_VERSION = model_version.version
+
+print("===================================")
+print("   Loading model from MLflow Registry")
+print(f"   Model: {MODEL_NAME}")
+print(f"   Version: {MODEL_VERSION}")
+print(f"   Run ID: {RUN_ID}")
+print("===================================")
+
+# Load model
+model_uri = f"models:/{MODEL_NAME}/{MODEL_VERSION}"
+model = mlflow.sklearn.load_model(model_uri)
+
+# Load preprocessing config from same run
+config_path = mlflow.artifacts.download_artifacts(
+    run_id=RUN_ID,
+    artifact_path="config/preprocess_config.pkl"
+)
+PREPROCESS_CONFIG = joblib.load(config_path)
+
+print("Model & preprocessing config loaded successfully.")
 print("===================================")
 
 # Prediction counter fo monitoring
@@ -59,7 +96,6 @@ def predict():
     global prediction_count, prediction_log
 
     try:
-        # === 1. LOAD CSV (SAMA SEPERTI DEBUG) ===
         if "file" not in request.files:
             return jsonify({"error": "CSV file is required"}), 400
 
@@ -69,55 +105,36 @@ def predict():
         if df.empty:
             return jsonify({"error": "Uploaded CSV is empty"}), 400
 
-        print("=== RAW DATA ===")
-        print(df.head())
-        print(df.isna().sum())
-
-        # === 2. FEATURE ENGINEERING (SAMA) ===
+        # Feature Engineering
         df = build_features(df)
-
-        print("\n=== AFTER FEATURE ENGINEERING ===")
-        print(df.head())
-        # === 3. PREPROCESS (SAMA PERSIS) ===
         X = preprocess_for_model(df, PREPROCESS_CONFIG)
-        
-
-        print("\n=== AFTER PREPROCESS ===")
-        print("Shape:", X.shape)
-        print("dtype:", X.dtype)
-        print("min:", np.min(X))
-        print("max:", np.max(X))
-        print("NaN:", np.isnan(X).any())
-        print("Inf:", np.isinf(X).any())
 
         if np.isnan(X).any() or np.isinf(X).any():
             return jsonify({"error": "Invalid values after preprocessing"}), 400
 
-        # === 4. MODEL PREDICT (SAMA) ===
+        # Predict
         log_pred = model.predict(X)
-
-        print("\n=== MODEL OUTPUT ===")
-        print("Log prediction:", log_pred[:5])
-        print("NaN:", np.isnan(log_pred).any())
-        print("Inf:", np.isinf(log_pred).any())
 
         if np.isnan(log_pred).any() or np.isinf(log_pred).any():
             return jsonify({"error": "Model produced invalid predictions"}), 400
-
-        # === 5. REVERSE LOG (SAMA) ===
+        
         price = np.expm1(log_pred)
-
-        print("\n=== FINAL PRICE ===")
-        print(price[:5])
-
         prediction_count += len(price)
 
-        for lp, p in zip(log_pred, price):
-            prediction_log.append({
-                "log_prediction": float(lp),
+        # Logging
+        for i, (lp, p) in enumerate(zip(log_pred, price)):
+            log_entry = {
+                "timestamp": datetime.now().isoformat(),
+                "input": df.iloc[i].to_dict(),   # input data
                 "prediction": float(p),
-                "timestamp": datetime.now().isoformat()
-            })
+                "model_version": MODEL_VERSION
+            }
+            # /metrics
+            prediction_log.append(log_entry)
+
+            # Log for mmonitoring
+            with open(PREDICTION_LOG_FILE, "a") as f:
+                f.write(json.dumps(log_entry) + "\n")
 
         return jsonify({
             "predictions": price.tolist(),
@@ -146,6 +163,6 @@ def metrics():
         "timestamp": datetime.now().isoformat()
     })
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    app.run(host="0.0.0.0", port=5001, debug=False)
 
 

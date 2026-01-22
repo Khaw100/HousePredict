@@ -10,8 +10,8 @@ ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 
 st.set_page_config(page_title="Housing Price Prediction", layout="wide")
 
-BAACKEND_URL = "http://backend:5000/predict" 
-METRICS_URL = "http://backend:5000/metrics"
+BAACKEND_URL = "http://backend:5001/predict" 
+METRICS_URL = "http://backend:5001/metrics"
 
 
 # Header Section
