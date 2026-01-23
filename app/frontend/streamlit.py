@@ -159,6 +159,17 @@ with tab4:
             st.markdown(f"**Mean Squared Error (MSE):** {round(training.get('mse', 0), 2)}")
             st.markdown(f"**Root Mean Squared Error (RMSE):** {round(training.get('rmse', 0), 2)}")
             st.markdown(f"**Mean Absolute Error (MAE):** {round(training.get('mae', 0), 2)}")
+            st.markdown(f"**R-Squared (R2):** {round(training.get('r2', 0), 2)}")
+
+            st.write("---")
+            st.write(
+                f"📝 **Prediction Error Interpretation:**\n"
+                f"- The model has an MAE of approximately **{training.get('mae',0):,.2f}**, "
+                f"which means on average, the predicted house price can be off by about ± **{training.get('mae',0):,.2f}** from the actual price.\n"
+                f"- The RMSE is around **{training.get('rmse',0):,.2f}**, which indicates that most predictions usually differ from actual values by about ± **{training.get('rmse',0):,.2f}**.\n"
+                f"- The R² = **{training.get('r2',0):.2f}** means the model explains approximately **{round(training.get('r2',0)*100)}**% of the variance in house prices.\n"
+                f"- In other words, while the model is fairly accurate, there can still be significant prediction errors for houses with extreme prices."
+            )
         else:
             st.error(f"Failed to fetch metrics: {response.text}")
     except Exception as e:

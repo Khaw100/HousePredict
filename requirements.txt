@@ -2,3 +2,4 @@ category-encoders
 seaborn
 mlflow
 xgboost
+faker

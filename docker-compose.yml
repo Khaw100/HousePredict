@@ -43,10 +43,10 @@ services:
     environment:
       - BACKEND_URL=http://backend:5001
     restart: always
-  
+
   monitor:
     build:
-      context: ./app/backend
+      context: ./monitor
       dockerfile: Dockerfile
     container_name: housing-monitor
     volumes:
@@ -56,7 +56,7 @@ services:
       - ./src:/src
     environment:
       - MLFLOW_TRACKING_URI=http://mlflow:5000
-    command: python /src/monitor.py continuous
+    command: python -u /src/monitor.py continuous
     depends_on:
       - backend
       - mlflow

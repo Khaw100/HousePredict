@@ -30,7 +30,7 @@ class ModelMonitor:
                 print(
                     f"⏳ Not enough samples yet: {len(predictions)}/{self.threshold_samples}"
                 )
-                return False, None
+                return False, None, predictions
             
             # Get recent predictions (last N samples)
             recent = predictions[-self.threshold_samples:]
@@ -67,7 +67,7 @@ class ModelMonitor:
                 drift_reasons.append(
                     f"High variance: ${std_pred:,.2f} > ${self.threshold_variance:,.2f}"
                 )
-                drift_detected = True  # ✅ FIXED: Missing line
+                drift_detected = True 
         
             # 2. Check if predictions are too high/low (distribution shift)
             if mean_pred > 500000 or mean_pred < 100000:
@@ -116,10 +116,10 @@ class ModelMonitor:
                 for reason in drift_reasons:
                     print(f"   - {reason}")
 
-                return True, alert
+                return True, alert, predictions
 
             print(f"\n✅ Model performance is stable")
-            return False, None
+            return False, None, predictions
         
         except FileNotFoundError:
             print(f"❌ Prediction log not found: {prediction_file}")
@@ -153,7 +153,7 @@ def main():
 
     if mode == "once":
         # Run once and exit (untuk demo)
-        needs_retraining, alert = monitor.check_performance_drift()
+        needs_retraining, alert, predictions = monitor.check_performance_drift()
 
         if needs_retraining:
             monitor.save_alert(alert)
@@ -173,8 +173,8 @@ def main():
         import time
 
         while True:
-            needs_retraining, alert = monitor.check_performance_drift()
-
+            needs_retraining, alert, predictions = monitor.check_performance_drift()
+            print(f"🔄 Checking performance drift... Total predictions so far: {len(predictions)}")
             if needs_retraining:
                 monitor.save_alert(alert)
                 print("\n🔄 Triggering retraining pipeline...")

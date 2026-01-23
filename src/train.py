@@ -74,11 +74,13 @@ def train_model(
         model.fit(X_train_p, y_train)
 
         y_pred = model.predict(X_val_p)
-
+        y_pred_real = np.expm1(y_pred)  # inverse of log1p
+        y_val_real = np.expm1(y_val)    # inverse of log1p
         metrics = {
-            "rmse": np.sqrt(mean_squared_error(y_val, y_pred)),
-            "mae": mean_absolute_error(y_val, y_pred),
-            "r2": r2_score(y_val, y_pred),
+            "mse": mean_squared_error(y_val_real, y_pred_real),
+            "rmse": np.sqrt(mean_squared_error(y_val_real, y_pred_real)),
+            "mae": mean_absolute_error(y_val_real, y_pred_real),
+            "r2": r2_score(y_val_real, y_pred_real),
         }
 
         mlflow.log_metrics(metrics)

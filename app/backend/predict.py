@@ -74,26 +74,14 @@ prediction_log = []
 
 def log_prediction_to_file(engineered_data, prediction_value, model_version):
     try:
+        features_to_log = ["OverallQual", "TotalSF", "GrLivArea", "HouseAge", "GarageArea", "GarageCars",
+                           "KitchenQual", "BsmtQual", "YearRemodAdd", "LotArea", "TotalBsmtFinSF", "LotFrontage",
+                           "MasVnrArea", "TotalPorchSF"]
         log_entry = {
             "timestamp": datetime.now().isoformat(),
             "prediction": float(prediction_value),
             "model_version": str(model_version),
-            "features": {
-                "OverallQual": int(engineered_data.get("OverallQual", 0)),
-                "TotalSF": int(engineered_data.get("TotalSF", 0)),
-                "GrLivArea": int(engineered_data.get("GrLivArea", 0)),
-                "HouseAge": int(engineered_data.get("HouseAge", 0)),
-                "GarageArea": int(engineered_data.get("GarageArea", 0)),
-                "GarageCars": int(engineered_data.get("GarageCars", 0)),
-                "KitchenQual": int(engineered_data.get("KitchenQual", 0)),
-                "BsmtQual": int(engineered_data.get("BsmtQual", 0)),
-                "YearRemodAdd": int(engineered_data.get("YearRemodAdd", 0)),
-                "LotArea": int(engineered_data.get("LotArea", 0)),
-                "TotalBsmtFinSF": int(engineered_data.get("TotalBsmtFinSF", 0)),
-                "LotFrontage": int(engineered_data.get("LotFrontage", 0)),
-                "MasVnrArea": int(engineered_data.get("MasVnrArea", 0)),
-                "TotalPorchSF": int(engineered_data.get("TotalPorchSF", 0)),
-            }
+            "features": {k: engineered_data.get(k) for k in features_to_log}
         }
         
         # Append to JSONL file
