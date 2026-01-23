@@ -1,19 +1,38 @@
 version: "3.9"
 
 services:
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.10.2
+    container_name: mlflow
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./mlruns:/mlruns
+    command: >
+      mlflow server
+      --backend-store-uri file:///mlruns
+      --artifacts-destination file:///mlruns
+      --host 0.0.0.0
+      --port 5000
+
   backend:
     build:
       context: ./app/backend
       dockerfile: Dockerfile
     container_name: housing-backend
     ports:
-      - "5000:5000"
+      - "5001:5001"
     volumes:
-      - ./app/backend/logs:/app/logs
+      - ./logs:/app/logs
+      - ./data:/app/data
+      - ./config:/app/config
+      - ./src:/src
     environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
       - MODEL_NAME=housing-price-model
       - MODEL_VERSION=latest
-
+    depends_on:
+      - mlflow
   frontend:
     build: ./app/frontend
     container_name: housing-frontend
@@ -22,5 +41,22 @@ services:
     depends_on:
       - backend
     environment:
-      - BACKEND_URL=http://backend:5000
+      - BACKEND_URL=http://backend:5001
     restart: always
+  
+  monitor:
+    build:
+      context: ./app/backend
+      dockerfile: Dockerfile
+    container_name: housing-monitor
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+      - ./config:/app/config
+      - ./src:/src
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    command: python /src/monitor.py continuous
+    depends_on:
+      - backend
+      - mlflow

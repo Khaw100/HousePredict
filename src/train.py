@@ -2,196 +2,144 @@ import mlflow
 import mlflow.sklearn
 import pandas as pd
 import numpy as np
-import json 
+import json
 import joblib
 import sys
 import os
 from datetime import datetime
-from sklearn.preprocessing import RobustScaler
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 from xgboost import XGBRegressor
 from sklearn.model_selection import train_test_split
+from tempfile import TemporaryDirectory
 
 def build_features(df):
     df = df.copy()
-
     df["HouseAge"] = df["YrSold"] - df["YearBuilt"]
     df["TotalSF"] = df["TotalBsmtSF"] + df["1stFlrSF"] + df["2ndFlrSF"]
     df["TotalPorchSF"] = (
-        df["OpenPorchSF"] + df["EnclosedPorch"] +
-        df["3SsnPorch"] + df["ScreenPorch"] + df["WoodDeckSF"]
+        df["OpenPorchSF"] + df["EnclosedPorch"]
+        + df["3SsnPorch"] + df["ScreenPorch"] + df["WoodDeckSF"]
     )
     df["TotalBsmtFinSF"] = df["BsmtFinSF1"] + df["BsmtFinSF2"]
-
     return df
 
 
-# preprocess_config = {
-#     "selected_features": [
-#         "OverallQual", "TotalSF", "GrLivArea", "HouseAge",
-#         "GarageArea", "GarageCars", "KitchenQual", "BsmtQual",
-#         "YearRemodAdd", "LotArea", "TotalBsmtFinSF",
-#         "LotFrontage", "MasVnrArea", "TotalPorchSF"
-#     ],
-#     "log_transform_cols": [
-#         "LotFrontage", "LotArea", "MasVnrArea",
-#         "GrLivArea", "TotalSF", "TotalPorchSF", "TotalBsmtFinSF"
-#     ],
-#     "ordinal_maps": {
-#         "KitchenQual": {'NA':0,'Po':1,'Fa':2,'TA':3,'Gd':4,'Ex':5},
-#         "BsmtQual": {'NA':0,'Po':1,'Fa':2,'TA':3,'Gd':4,'Ex':5}
-#     }
-# }
-
-
-def preprocess_for_model(
-    df,
-    preprocess_config,
-    scaler=None,
-    fit=False,
-    use_scaler=True
-):
+def preprocess_for_model(df, preprocess_config):
     X = df.copy()
 
-    selected_features = preprocess_config["selected_features"]
-    log_transform_cols = preprocess_config["log_transform_cols"]
-    ordinal_maps = preprocess_config["ordinal_maps"]
-
-    # Ordinal encoding
-    for col, mapping in ordinal_maps.items():
+    for col, mapping in preprocess_config["ordinal_maps"].items():
         X[col] = X[col].astype(str).map(mapping)
 
-    # Select features
-    X = X[selected_features]
+    X = X[preprocess_config["selected_features"]]
 
-    # Log transform
-    for col in log_transform_cols:
+    for col in preprocess_config["log_transform_cols"]:
         X[col] = np.log1p(X[col])
 
-    # Scaling (optional)
-    if not use_scaler:
-        return X.values, None
+    return X.values
 
-    if scaler is None:
-        scaler = RobustScaler()
 
-    if fit:
-        X_scaled = scaler.fit_transform(X)
-    else:
-        X_scaled = scaler.transform(X)
-
-    return X_scaled, scaler
-
-# This function manually write by me 
-def train_model(data_path,
-                preprocess_config_path="models/preprocess_config.pkl",
-                experiment_name="HousePricePrediction"):
-    
-    # Set up MLflow experiment
-    mlflow.set_tracking_uri("file:./mlruns")
+def train_model(
+    data_path,
+    preprocess_config_path="/app/config/preprocess_config.pkl",
+    experiment_name="HousePricePrediction",
+):
+    mlflow_uri = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
+    mlflow.set_tracking_uri(mlflow_uri)
     mlflow.set_experiment(experiment_name)
 
-    # Load data
-    print("Loading data...")
-    data = pd.read_csv(data_path)
+    print(f"MLflow Tracking URI: {mlflow_uri}")
 
-    # Prepare Configurations
+    data = pd.read_csv(data_path)
     preprocess_config = joblib.load(preprocess_config_path)
-    
-    # Feature Engineering
-    print("Building features...")
+    print(f"Features: {preprocess_config['selected_features']}")
+
     data = build_features(data)
 
-    # Safety check
-    missing_cols = set(preprocess_config["selected_features"]) - set(data.columns)
-    if missing_cols:
-        raise ValueError(f"Missing columns after build_features: {missing_cols}")
-
-    # Target and Features
     X = data[preprocess_config["selected_features"]]
     y = np.log1p(data["SalePrice"])
 
-    # Split data
-    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
+    X_train, X_val, y_train, y_val = train_test_split(
+        X, y, test_size=0.2, random_state=42
+    )
+    model_params = {'subsample': 0.9, 'min_child_weight': 3, 'max_depth': 4, 'learning_rate': 0.03, 'gamma': 0, 'colsample_bytree': 0.7}
+    X_train_p = preprocess_for_model(X_train, preprocess_config)
+    X_val_p = preprocess_for_model(X_val, preprocess_config)
 
-    # Preprocess data
-    print("Preprocessing data...")
+    with mlflow.start_run(run_name=f"xgb_{datetime.now():%Y%m%d_%H%M%S}") as run:
 
-    # Not using scaler for XGBoost because it's tree-based
-    X_train_processed, _ = preprocess_for_model(X_train, preprocess_config, use_scaler=False)
-    X_val_processed, _ = preprocess_for_model(X_val, preprocess_config, use_scaler=False)
-
-    # Train model
-    print("Training model...")
-    with mlflow.start_run(
-        run_name=f"xgb_run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    ):
-        # Prepare parameters
-        params = preprocess_config.get("model_params", {})
-
-        # Save Logged parameters
-        mlflow.log_params(params)
-        mlflow.log_param("model_type", "XGBRegressor")
-        mlflow.log_param("use_scaler", False)
-        mlflow.log_param("Selected Features", preprocess_config["selected_features"])
-
-        # Initialize and train model
-        print("Initializing and training XGBRegressor...")
         model = XGBRegressor(
             objective="reg:squarederror",
-            **params
+            **model_params,
         )
+        model.fit(X_train_p, y_train)
 
-        model.fit(X_train_processed, y_train)
-        print("Model training completed.")
+        y_pred = model.predict(X_val_p)
 
-        # Validate model
-        print("Validating model...")
-        y_val_pred = model.predict(X_val_processed)
+        metrics = {
+            "rmse": np.sqrt(mean_squared_error(y_val, y_pred)),
+            "mae": mean_absolute_error(y_val, y_pred),
+            "r2": r2_score(y_val, y_pred),
+        }
 
-        # Calculate metrics
-        mse = mean_squared_error(y_val, y_val_pred)
-        rmse = np.sqrt(mean_squared_error(y_val, y_val_pred))
-        r2 = r2_score(y_val, y_val_pred)
-        mae = mean_absolute_error(y_val, y_val_pred)
-        metrics = {"mse": mse, "rmse": rmse, "mae": mae, "r2_score": r2}
-        
-        # Log metrics
         mlflow.log_metrics(metrics)
-
-        # 🔥 SAVE NATIVE XGBOOST MODEL
-        os.makedirs("models", exist_ok=True)
-        joblib.dump(model, "models/tuned_xgb_model_v1.pkl")
-        # model.get_booster().save_model("models/tuned_xgb_model_v1.json")
-
-        # Log model
-        mlflow.sklearn.log_model(model, "model", registered_model_name="housing-price-model")
-        print("Model validation completed.")
-
-        # Log additional info
+        mlflow.log_params(model_params)
         mlflow.log_param("training_samples", len(X_train))
         mlflow.log_param("validation_samples", len(X_val))
 
-        # Save metrics to file for monitoring
-        with open("logs/latest_metrics.json", "w") as f:
-            json.dump({
-                **metrics,
-                "timestamp": datetime.now().isoformat(),
-                "run_id": mlflow.active_run().info.run_id
-            }, f, indent=4)
-        
-        print("Training process completed.")
-        print(f"Metrics:")
-        print(f"RMSE: ${rmse:,.2f}")
-        print(f"MAE: ${mae:,.2f}")
-        print(f"R²: {r2:.4f}")
-        print(f"Run ID: {mlflow.active_run().info.run_id}")
+        print("📦 Logging model artifacts...")
+        model_info = mlflow.sklearn.log_model(
+            model,
+            artifact_path="model",
+            registered_model_name="housing-price-model"  # Langsung register di sini
+        )
 
-        return mlflow.active_run().info.run_id
-    
+        with TemporaryDirectory() as tmp:
+            cfg_path = os.path.join(tmp, "preprocess_config.pkl")
+            joblib.dump(preprocess_config, cfg_path)
+            mlflow.log_artifact(cfg_path, artifact_path="config")
+
+        
+
+        os.makedirs("/app/logs", exist_ok=True)
+        with open("/app/logs/latest_metrics.json", "w") as f:
+            json.dump(
+                {
+                    **metrics,
+                    "timestamp": datetime.now().isoformat(),
+                    "run_id": run.info.run_id,
+                    "model_version": "latest",
+                },
+                f,
+                indent=2,
+            )
+
+
+        # # ✅ 1. LOG MODEL
+        # mlflow.sklearn.log_model(
+        #     model,
+        #     artifact_path="model"
+        # )
+
+
+        # # ✅ 2. LOG PREPROCESS CONFIG (TEMP SAFE)
+        # with TemporaryDirectory() as tmp:
+        #     cfg_path = os.path.join(tmp, "preprocess_config.pkl")
+        #     joblib.dump(preprocess_config, cfg_path)
+        #     mlflow.log_artifact(cfg_path, artifact_path="config")
+
+        # # ✅ 3. REGISTER MODEL
+        # run_id = mlflow.active_run().info.run_id
+        # mlflow.register_model(
+        #     model_uri=f"runs:/{run_id}/model",
+        #     name="housing-price-model",
+        # )
+
+        print(f"✅ Training completed - Run ID: {run.info.run_id}")
+        print(f"📍 Model URI: {model_info.model_uri}")
+        print("📊 Metrics:", metrics)
+
+        return run.info.run_id
+
 
 if __name__ == "__main__":
-    data_path = sys.argv[1] if len(sys.argv) > 1 else "data/train_cleaned.csv"
-    train_model(data_path)
-
-
+    train_model(sys.argv[1] if len(sys.argv) > 1 else "data/train_cleaned.csv")

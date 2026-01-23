@@ -1,65 +1,129 @@
 import mlflow.sklearn
 import pandas as pd
 from utils.preprocessing import build_features, preprocess_for_model
-from utils.config import preprocess_config as PREPROCESS_CONFIG
 import json
 import numpy as np
 import joblib
 import os
-
-from xgboost import XGBRegressor
+from mlflow.tracking import MlflowClient
 from flask import Flask, request, jsonify
 from datetime import datetime
 
 app = Flask(__name__)
 
 # Environment & Paths
-BASE_DIR = os.path.dirname(__file__)
+LOGS_DIR = "/app/logs"
 MODEL_NAME = "housing-price-model"
 MODEL_VERSION = os.getenv("MODEL_VERSION", "latest")
 
-LOGS_DIR = os.path.join(BASE_DIR, "logs")
-
+PREDICTION_LOG_FILE = os.path.join(LOGS_DIR, "predictions.jsonl")
 METRICS_FILE = os.path.join(LOGS_DIR, "latest_metrics.json")
-# Path absolut model
-MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
-MODEL_DIR = os.path.abspath(MODEL_DIR)
+
+os.makedirs(LOGS_DIR, exist_ok=True)
 
 print("===================================")
-print("Loading model from:", MODEL_DIR)
-print("PATH MODEL")
-print(MODEL_DIR)
-
-if not os.path.exists(MODEL_DIR):
-    raise FileNotFoundError(f"Model not found at {MODEL_DIR}")
-
-# load model
-model = joblib.load(os.path.join(MODEL_DIR, "tuned_xgb_model_v1.pkl"))
-# model = XGBRegressor
-# model.load_model(os.path.join(MODEL_DIR, "tuned_xgb_model_v1.pkl"))
-print("Model loaded successfully.")
+print(f"   Loading model from MLflow Registry")
+print(f"   Model: {MODEL_NAME}")
+print(f"   Version: {MODEL_VERSION}")
 print("===================================")
 
-# Prediction counter fo monitoring
+# MLFLOW model Registry URI
+mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000"))
+client = MlflowClient()
+
+# Resolve model version (alias -> fallback latest)
+try:
+    print("Trying to load model using alias: champion")
+    model_version = client.get_model_version_by_alias(
+        name=MODEL_NAME,
+        alias="champion"
+    )
+except Exception:
+    print("Alias 'champion' not found, fallback to latest version")
+    latest = client.get_latest_versions(MODEL_NAME)
+    model_version = latest[0]
+
+RUN_ID = model_version.run_id
+MODEL_VERSION = model_version.version
+
+print("===================================")
+print("   Loading model from MLflow Registry")
+print(f"   Model: {MODEL_NAME}")
+print(f"   Version: {MODEL_VERSION}")
+print(f"   Run ID: {RUN_ID}")
+print("===================================")
+
+# Load model
+model_uri = f"models:/{MODEL_NAME}/{MODEL_VERSION}"
+model = mlflow.sklearn.load_model(model_uri)
+
+# Load preprocessing config from same run
+config_path = mlflow.artifacts.download_artifacts(
+    run_id=RUN_ID,
+    artifact_path="config/preprocess_config.pkl"
+)
+PREPROCESS_CONFIG = joblib.load(config_path)
+
+print("✅ Model & preprocessing config loaded successfully.")
+print("===================================")
+
+# Prediction counter for monitoring
 prediction_count = 0
 prediction_log = []
 
+
+def log_prediction_to_file(engineered_data, prediction_value, model_version):
+    try:
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "prediction": float(prediction_value),
+            "model_version": str(model_version),
+            "features": {
+                "OverallQual": int(engineered_data.get("OverallQual", 0)),
+                "TotalSF": int(engineered_data.get("TotalSF", 0)),
+                "GrLivArea": int(engineered_data.get("GrLivArea", 0)),
+                "HouseAge": int(engineered_data.get("HouseAge", 0)),
+                "GarageArea": int(engineered_data.get("GarageArea", 0)),
+                "GarageCars": int(engineered_data.get("GarageCars", 0)),
+                "KitchenQual": int(engineered_data.get("KitchenQual", 0)),
+                "BsmtQual": int(engineered_data.get("BsmtQual", 0)),
+                "YearRemodAdd": int(engineered_data.get("YearRemodAdd", 0)),
+                "LotArea": int(engineered_data.get("LotArea", 0)),
+                "TotalBsmtFinSF": int(engineered_data.get("TotalBsmtFinSF", 0)),
+                "LotFrontage": int(engineered_data.get("LotFrontage", 0)),
+                "MasVnrArea": int(engineered_data.get("MasVnrArea", 0)),
+                "TotalPorchSF": int(engineered_data.get("TotalPorchSF", 0)),
+            }
+        }
+        
+        # Append to JSONL file
+        with open(PREDICTION_LOG_FILE, "a") as f:
+            f.write(json.dumps(log_entry) + "\n")
+        
+        return True
+    except Exception as e:
+        print(f"Warning: Failed to log prediction: {e}")
+        return False
+
+
 @app.route("/health", methods=["GET"])
 def health_check():
+    """Health check endpoint"""
     return jsonify({
-                        "status": "healthy",
-                        "model_name": MODEL_NAME,
-                        "model_version": MODEL_VERSION,
-                        "predictions_served": prediction_count,
-                        "timestamp": datetime.now().isoformat()
-                    }), 200
+        "status": "healthy",
+        "model_name": MODEL_NAME,
+        "model_version": MODEL_VERSION,
+        "predictions_served": prediction_count,
+        "timestamp": datetime.now().isoformat()
+    }), 200
+
 
 @app.route("/predict", methods=["POST"])
 def predict():
     global prediction_count, prediction_log
 
     try:
-        # === 1. LOAD CSV (SAMA SEPERTI DEBUG) ===
+        # Check if file is provided
         if "file" not in request.files:
             return jsonify({"error": "CSV file is required"}), 400
 
@@ -69,68 +133,59 @@ def predict():
         if df.empty:
             return jsonify({"error": "Uploaded CSV is empty"}), 400
 
-        print("=== RAW DATA ===")
-        print(df.head())
-        print(df.isna().sum())
+        # Feature Engineering
+        df_engineered = build_features(df)
+        X = preprocess_for_model(df_engineered, PREPROCESS_CONFIG)
 
-        # === 2. FEATURE ENGINEERING (SAMA) ===
-        df = build_features(df)
-
-        print("\n=== AFTER FEATURE ENGINEERING ===")
-        print(df.head())
-        # === 3. PREPROCESS (SAMA PERSIS) ===
-        X = preprocess_for_model(df, PREPROCESS_CONFIG)
-        
-
-        print("\n=== AFTER PREPROCESS ===")
-        print("Shape:", X.shape)
-        print("dtype:", X.dtype)
-        print("min:", np.min(X))
-        print("max:", np.max(X))
-        print("NaN:", np.isnan(X).any())
-        print("Inf:", np.isinf(X).any())
-
+        # Validate preprocessed data
         if np.isnan(X).any() or np.isinf(X).any():
             return jsonify({"error": "Invalid values after preprocessing"}), 400
 
-        # === 4. MODEL PREDICT (SAMA) ===
+        # Predict (log scale)
         log_pred = model.predict(X)
 
-        print("\n=== MODEL OUTPUT ===")
-        print("Log prediction:", log_pred[:5])
-        print("NaN:", np.isnan(log_pred).any())
-        print("Inf:", np.isinf(log_pred).any())
-
+        # Validate predictions
         if np.isnan(log_pred).any() or np.isinf(log_pred).any():
             return jsonify({"error": "Model produced invalid predictions"}), 400
-
-        # === 5. REVERSE LOG (SAMA) ===
+        
+        # Convert back to original scale
         price = np.expm1(log_pred)
-
-        print("\n=== FINAL PRICE ===")
-        print(price[:5])
-
         prediction_count += len(price)
 
-        for lp, p in zip(log_pred, price):
-            prediction_log.append({
-                "log_prediction": float(lp),
+        # Log each prediction individually
+        logged_count = 0
+        for i, (lp, p) in enumerate(zip(log_pred, price)):
+
+            log_entry = {
+                "timestamp": datetime.now().isoformat(),
                 "prediction": float(p),
-                "timestamp": datetime.now().isoformat()
-            })
+                "model_version": MODEL_VERSION
+            }
+            prediction_log.append(log_entry)
+
+            engineered_row = df_engineered.iloc[i].to_dict()
+            if log_prediction_to_file(engineered_row, p, MODEL_VERSION):
+                logged_count += 1
+
+        print(f"📝 Logged {logged_count}/{len(price)} predictions to {PREDICTION_LOG_FILE}")
 
         return jsonify({
             "predictions": price.tolist(),
-            "predictions_served": prediction_count
+            "count": len(price),
+            "predictions_served": prediction_count,
+            "logged_for_monitoring": logged_count,
+            "timestamp": datetime.now().isoformat()
         }), 200
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
-
 
 
 @app.route("/metrics", methods=["GET"])
 def metrics():
+    """Get model metrics and prediction statistics"""
     training_metrics = {}
 
     if os.path.exists(METRICS_FILE):
@@ -145,7 +200,48 @@ def metrics():
         "recent_predictions": prediction_log[-10:],
         "timestamp": datetime.now().isoformat()
     })
+
+
+@app.route("/monitoring/stats", methods=["GET"])
+def monitoring_stats():
+    try:
+        predictions = []
+        
+        if not os.path.exists(PREDICTION_LOG_FILE):
+            return jsonify({
+                "total_predictions": 0,
+                "message": "No predictions logged yet"
+            })
+        
+        with open(PREDICTION_LOG_FILE, "r") as f:
+            for line in f:
+                predictions.append(json.loads(line))
+        
+        if not predictions:
+            return jsonify({
+                "total_predictions": 0,
+                "message": "No predictions in file"
+            })
+        
+        pred_values = [p["prediction"] for p in predictions]
+        
+        return jsonify({
+            "total_predictions": len(predictions),
+            "recent_predictions": predictions[-10:],  # Last 10
+            "statistics": {
+                "mean": float(np.mean(pred_values)),
+                "std": float(np.std(pred_values)),
+                "min": float(min(pred_values)),
+                "max": float(max(pred_values)),
+                "range": float(max(pred_values) - min(pred_values))
+            },
+            "timestamp": datetime.now().isoformat()
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=False)
-
-
+    app.run(host="0.0.0.0", port=5001, debug=False)
