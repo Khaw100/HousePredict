@@ -1,8 +1,11 @@
 flask
+fastapi
+uvicorn[standard]
 pandas
 numpy
 scikit-learn
 xgboost
 mlflow==2.10.2
+python-multipart
 joblib
 python-dateutil

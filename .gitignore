@@ -24,8 +24,8 @@ Thumbs.db
 mlruns/
 mlflow.db
 
-data/
-*.csv
+# data/
+# *.csv
 *.parquet
 # *.pkl
 

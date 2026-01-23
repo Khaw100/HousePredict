@@ -23,23 +23,53 @@ This project is an end-to-end Machine Learning application for predicting housin
 ### Option 1: Using Docker Compose (Recommended)
 
 1. Clone the repository:
+
    ```bash
    git clone <repository-url>
    cd HomePricesPrediction
    ```
 
 2. Build and run the services:
+
    ```bash
-   docker-compose up --build
+   docker compose up -d mlflow
    ```
 
-3. Access the application:
+3. Train the model:
+
+   ```
+   docker compose run --rm backend python /src/train.py /app/data/train_cleaned.csv
+   ```
+
+4. Start Backend API:
+
+   ```
+   docker compose up -d backend
+   ```
+
+5. Start Frontend:
+
+   ```
+   docker compose up -d frontend
+   ```
+
+6. Start Monitoring Service:
+
+   ```
+   docker compose up -d monitor
+   docker logs -f housing-monitor
+
+   ```
+
+7. Access the application:
    - Frontend: http://localhost:8501
-   - Backend API: http://localhost:5000
+   - Backend API: http://localhost:5001
+   - MLflow UI : http://localhost:5000
 
 ### Option 2: Local Setup
 
 1. Install dependencies:
+
    ```bash
    pip install -r requirements.txt
    pip install -r app/backend/requirements.txt
@@ -47,6 +77,7 @@ This project is an end-to-end Machine Learning application for predicting housin
    ```
 
 2. Run the backend:
+
    ```bash
    cd app/backend
    python predict.py
@@ -79,10 +110,13 @@ HomePricesPrediction/
 │   ├── backend/          # Flask API
 │   └── frontend/         # Streamlit UI
 ├── data/                 # Sample datasets
+├── config/               # Preprocessing and model configuration files
+├── logs/                 # Prediction logs and monitoring outputs
+├── monitor/              # Model monitoring & statistics service
 ├── models/               # Trained models and configs
 ├── notebooks/            # Jupyter notebooks for development
 ├── src/                  # Training scripts
-├── docker-compose.yml    # Deployment config
+├── docker-compose.yml    # Multi-service deployment configuration
 └── readme.md
 ```
 
@@ -94,6 +128,11 @@ To understand how the model was developed, including exploratory data analysis, 
 - `feature_engineering.ipynb`: Feature preprocessing and selection
 - `modeling.ipynb`: Model training and evaluation
 
-## 📦 Provided Zip File
+## 📊 Model Evaluation
 
-A zip file containing the complete project codebase, models, and data is provided for easy download and setup. Extract the zip file and follow the installation instructions above.
+Typical evaluation metrics include:
+
+- Mean Squared Error (MSE)
+- Root Mean Squared Error (RMSE)
+- Mean Absolute Error (MAE)
+- R-Squared (R²)
